@@ -58,11 +58,28 @@ export default function Stock() {
     }
   }
 
+  // Solo marcar disponible sin cantidad (para productos como aguapanela)
+  async function marcarSoloDisponible(menuItemId) {
+    const existe = stock[menuItemId]
+    if (existe) {
+      await supabase.from('stock_diario').update({ disponible: true, updated_at: new Date().toISOString() }).eq('id', existe.id)
+      setStock(prev => ({ ...prev, [menuItemId]: { ...prev[menuItemId], disponible: true } }))
+    } else {
+      const nuevo = { menu_item_id: menuItemId, fecha: hoy, cantidad_inicial: 0, cantidad_disponible: 0, disponible: true }
+      const { data } = await supabase.from('stock_diario').insert(nuevo).select().single()
+      setStock(prev => ({ ...prev, [menuItemId]: data }))
+    }
+  }
+
   function getStock(menuItemId) { return stock[menuItemId] || null }
 
   function toggleDisponible(menuItemId) {
     const s = getStock(menuItemId)
-    actualizarStock(menuItemId, 'disponible', s ? !s.disponible : false)
+    if (s) {
+      actualizarStock(menuItemId, 'disponible', !s.disponible)
+    } else {
+      marcarSoloDisponible(menuItemId)
+    }
   }
 
   function cambiarDisponible(menuItemId, delta, esPesoItem) {
@@ -89,7 +106,8 @@ export default function Stock() {
         items.map(item => {
           const s = getStock(item.id)
           const configurado = s !== null
-          const disponible = s ? s.disponible : true
+          const disponible = s ? s.disponible : false
+          const tieneStock = s && s.cantidad_inicial > 0
           const peso = esPeso(item)
 
           return (
@@ -99,22 +117,37 @@ export default function Stock() {
                   <span className="text-bold">{item.nombre}</span>
                   {peso && <span className="badge" style={{ background: '#8e44ad22', color: '#af7ac5', fontSize: '0.65rem' }}>⚖️ kg</span>}
                 </div>
-                <button className={`switch ${disponible && configurado ? 'on' : ''}`} onClick={() => toggleDisponible(item.id)} />
+                <button className={`switch ${disponible ? 'on' : ''}`} onClick={() => toggleDisponible(item.id)} />
               </div>
 
-              {!configurado ? (
-                <div className="mt-12">
+              {/* Texto de estado */}
+              {!configurado && (
+                <p className="text-xs mt-8 text-gray">Toca el interruptor para marcar disponible, o ingresa cantidad:</p>
+              )}
+              {configurado && !tieneStock && disponible && (
+                <p className="text-xs mt-8" style={{ color: '#2ecc71' }}>✅ Disponible (sin control de cantidad)</p>
+              )}
+              {configurado && !disponible && (
+                <p className="text-xs mt-8" style={{ color: '#c0392b' }}>⛔ No disponible</p>
+              )}
+
+              {/* Input de cantidad (siempre visible para poder agregar si quieren) */}
+              {(!configurado || (configurado && !tieneStock && disponible)) && (
+                <div className="mt-8">
                   <div className="flex gap-8" style={{ alignItems: 'center' }}>
                     <input className="input" inputMode={peso ? 'decimal' : 'numeric'}
-                      placeholder={peso ? 'Kilos disponibles (ej: 10)' : 'Cantidad inicial'}
+                      placeholder={peso ? 'Opcional: kilos (ej: 10)' : 'Opcional: cantidad'}
                       style={{ flex: 1 }}
-                      onKeyDown={e => { if (e.key === 'Enter') iniciarStock(item.id, e.target.value, peso) }}
+                      onKeyDown={e => { if (e.key === 'Enter' && e.target.value) iniciarStock(item.id, e.target.value, peso) }}
                       onBlur={e => { if (e.target.value) iniciarStock(item.id, e.target.value, peso) }}
                     />
                     <span className="text-xs text-gray">{peso ? 'kg' : 'und'}</span>
                   </div>
                 </div>
-              ) : (
+              )}
+
+              {/* Control de cantidad cuando ya tiene stock */}
+              {configurado && tieneStock && (
                 <div className="mt-12">
                   <div className="flex-between" style={{ alignItems: 'center' }}>
                     <div className="flex gap-8" style={{ alignItems: 'center' }}>
@@ -126,23 +159,21 @@ export default function Stock() {
                           const val = peso ? parseFloat(e.target.value) || 0 : parseInt(e.target.value) || 0
                           actualizarStock(item.id, 'cantidad_disponible', val)
                         }}
+                        onFocus={e => e.target.select()}
                         style={{ width: 70, textAlign: 'center', padding: '6px' }} />
                       <button className="btn btn-secondary btn-sm" onClick={() => cambiarDisponible(item.id, 1, peso)}
                         style={{ width: 36, padding: '6px 0' }}>+</button>
+                      <span className="text-xs text-gray">{peso ? 'kg' : 'und'}</span>
                     </div>
                     <span className="text-xs text-gray">
                       de {peso ? (s.cantidad_inicial % 1 === 0 ? s.cantidad_inicial : s.cantidad_inicial.toFixed(2)) : Math.round(s.cantidad_inicial)} {peso ? 'kg' : 'und'}
                     </span>
                   </div>
 
-                  {/* Mostrar gramos exactos para productos por peso */}
                   {peso && s.cantidad_disponible > 0 && (
-                    <p className="text-xs mt-8" style={{ color: '#af7ac5' }}>
-                      ⚖️ Disponible: {formatKgG(s.cantidad_disponible)}
-                    </p>
+                    <p className="text-xs mt-8" style={{ color: '#af7ac5' }}>⚖️ Disponible: {formatKgG(s.cantidad_disponible)}</p>
                   )}
 
-                  {!disponible && <p className="text-xs mt-8" style={{ color: '#c0392b' }}>⛔ Marcado como no disponible</p>}
                   {disponible && s.cantidad_disponible === 0 && <p className="text-xs mt-8" style={{ color: '#e8a849' }}>⚠️ Stock agotado</p>}
                   {disponible && peso && s.cantidad_disponible > 0 && s.cantidad_disponible < 1 && (
                     <p className="text-xs mt-8" style={{ color: '#e74c3c' }}>⚠️ Menos de 1 kg</p>

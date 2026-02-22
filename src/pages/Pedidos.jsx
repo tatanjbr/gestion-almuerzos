@@ -83,9 +83,7 @@ export default function Pedidos() {
     setLoading(false)
   }
 
-  function esPeso(menuItemId) {
-    return menuItems.find(m => m.id === menuItemId)?.tipo_medida === 'peso'
-  }
+  function esPeso(menuItemId) { return menuItems.find(m => m.id === menuItemId)?.tipo_medida === 'peso' }
 
   function getStockDisponible(menuItemId) {
     const s = stockMap[menuItemId]
@@ -94,23 +92,19 @@ export default function Pedidos() {
     return s.cantidad_disponible
   }
 
-  // Stock en tiempo real: resta lo que ya está en el pedido actual
   function getStockTiempoReal(menuItemId, excludeIdx) {
     const base = getStockDisponible(menuItemId)
     if (base === null) return null
     let usado = 0
     itemsPedido.forEach((item, idx) => {
       if (idx === excludeIdx) return
-      if (item.menu_item_id === menuItemId) {
-        usado += calcularDescuentoItem(item)
-      }
+      if (item.menu_item_id === menuItemId) usado += calcularDescuentoItem(item)
     })
     return Math.max(0, Math.round((base - usado) * 100) / 100)
   }
 
   function getVariantePeso(menuItemId, varianteId) {
-    const v = (variantes[menuItemId] || []).find(v => v.id === varianteId)
-    return v?.peso_gramos || 0
+    return (variantes[menuItemId] || []).find(v => v.id === varianteId)?.peso_gramos || 0
   }
 
   function calcularDescuentoItem(item) {
@@ -118,6 +112,15 @@ export default function Pedidos() {
       return (getVariantePeso(item.menu_item_id, item.variante_id) / 1000) * item.cantidad
     }
     return item.cantidad
+  }
+
+  // Stock obligatorio o no: si no hay registro de stock para este producto, se puede pedir
+  function productoDisponible(menuItemId) {
+    const s = stockMap[menuItemId]
+    if (!s) return true // sin stock configurado = disponible
+    if (!s.disponible) return false
+    if (s.cantidad_disponible <= 0 && s.cantidad_inicial > 0) return false
+    return true
   }
 
   function abrirNuevoPedido() {
@@ -142,12 +145,16 @@ export default function Pedidos() {
     } else if (campo === 'cantidadTexto') {
       const soloNumeros = valor.replace(/[^\d]/g, '')
       copia[idx].cantidadTexto = soloNumeros
-      const num = parseInt(soloNumeros) || 1
+      const num = parseInt(soloNumeros) || 0
       if (!esPeso(copia[idx].menu_item_id)) {
         const disponible = getStockTiempoReal(copia[idx].menu_item_id, idx)
-        copia[idx].cantidad = disponible !== null && num > disponible ? Math.max(1, Math.floor(disponible)) : Math.max(1, num)
+        if (disponible !== null && disponible > 0) {
+          copia[idx].cantidad = Math.min(num, Math.floor(disponible))
+        } else {
+          copia[idx].cantidad = num
+        }
       } else {
-        copia[idx].cantidad = Math.max(1, num)
+        copia[idx].cantidad = num
       }
     } else { copia[idx][campo] = valor }
     setItemsPedido(copia)
@@ -155,11 +162,16 @@ export default function Pedidos() {
 
   function validarCantidad(idx) {
     const copia = [...itemsPedido]
-    if (!copia[idx].cantidadTexto || copia[idx].cantidadTexto === '0') {
+    const num = parseInt(copia[idx].cantidadTexto) || 0
+    if (num < 1) {
       copia[idx].cantidadTexto = '1'; copia[idx].cantidad = 1
-    } else { copia[idx].cantidadTexto = copia[idx].cantidad.toString() }
+    } else {
+      copia[idx].cantidadTexto = copia[idx].cantidad.toString()
+    }
     setItemsPedido(copia)
   }
+
+  function seleccionarTodo(e) { e.target.select() }
 
   function quitarItem(idx) { setItemsPedido(itemsPedido.filter((_, i) => i !== idx)) }
 
@@ -179,10 +191,11 @@ export default function Pedidos() {
     if (!clienteInput.trim()) return alert('Escribe el identificador del cliente')
     if (itemsPedido.length === 0) return alert('Agrega al menos un producto')
     if (itemsPedido.some(i => !i.menu_item_id)) return alert('Selecciona un producto para cada item')
+    if (itemsPedido.some(i => i.cantidad < 1)) return alert('La cantidad debe ser al menos 1')
 
     for (const item of itemsPedido) {
       const disponibleReal = getStockTiempoReal(item.menu_item_id, -1)
-      if (disponibleReal !== null) {
+      if (disponibleReal !== null && disponibleReal > 0) {
         const descuento = calcularDescuentoItem(item)
         if (descuento > disponibleReal) {
           const menu = menuItems.find(m => m.id === item.menu_item_id)
@@ -239,14 +252,6 @@ export default function Pedidos() {
     setModal(false); cargar()
   }
 
-  // ---- LÓGICA DE ESTADOS SIMPLIFICADA ----
-  // Estados reales en DB: en_proceso, no_entregado, entregado
-  // Pero visualmente:
-  // - en_proceso = preparando, no ha salido
-  // - no_entregado + no pagado = 🔴 NO PAGADO (lo importante)
-  // - no_entregado + pagado = ✅ COMPLETADO (pagó y salió, listo)
-  // - entregado = ✅ COMPLETADO
-
   function estadoVisual(p) {
     if (p.estado === 'en_proceso') return { clase: 'badge-pending', texto: '⏳ Preparando', cardClass: 'card-en-proceso' }
     if (p.estado === 'no_entregado' || p.estado === 'entregado') {
@@ -254,16 +259,6 @@ export default function Pedidos() {
       return { clase: 'badge-progress', texto: '🔴 No pagado', cardClass: 'card-no-entregado' }
     }
     return { clase: '', texto: p.estado, cardClass: '' }
-  }
-
-  function accionPrincipal(p) {
-    if (p.estado === 'en_proceso') {
-      return { texto: '🛵 Enviar domicilio', accion: () => cambiarEstado(p, 'no_entregado') }
-    }
-    if (p.tipo_entrega === 'local' && p.estado === 'en_proceso') {
-      return { texto: '✅ Entregado', accion: () => cambiarEstado(p, 'entregado') }
-    }
-    return null
   }
 
   async function cambiarEstado(pedido, nuevoEstado) {
@@ -310,13 +305,7 @@ export default function Pedidos() {
       </div>
 
       <div className="tabs">
-        {[
-          { key: 'todos', label: 'Todos' },
-          { key: 'preparando', label: '⏳ Preparando' },
-          { key: 'no_pagado', label: '🔴 No pagado' },
-          { key: 'completado', label: '✅ Completado' },
-          { key: 'sin_pagar', label: '💰 Sin pagar' }
-        ].map(t => (
+        {[{ key: 'todos', label: 'Todos' }, { key: 'preparando', label: '⏳ Preparando' }, { key: 'no_pagado', label: '🔴 No pagado' }, { key: 'completado', label: '✅ Completado' }, { key: 'sin_pagar', label: '💰 Sin pagar' }].map(t => (
           <button key={t.key} className={`tab ${filtroEstado === t.key ? 'active' : ''}`} onClick={() => setFiltroEstado(t.key)}>{t.label}</button>
         ))}
       </div>
@@ -359,8 +348,7 @@ export default function Pedidos() {
           <div className="modal" onClick={e => e.stopPropagation()}>
             <h2 className="modal-title">Nuevo pedido</h2>
 
-            <div className="form-group">
-              <label>Cliente *</label>
+            <div className="form-group"><label>Cliente *</label>
               <input className="input" placeholder="Ej: Portal D4, Casa I1..." value={clienteInput} onChange={e => buscarCliente(e.target.value)} />
               {sugerencias.length > 0 && (
                 <div style={{ background: '#333', borderRadius: 8, marginTop: 4 }}>
@@ -369,16 +357,14 @@ export default function Pedidos() {
               )}
             </div>
 
-            <div className="form-group">
-              <label>Tipo de entrega</label>
+            <div className="form-group"><label>Tipo de entrega</label>
               <div className="flex gap-8">
                 <button className={`btn ${tipoEntrega === 'domicilio' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1 }} onClick={() => setTipoEntrega('domicilio')}>🛵 Domicilio</button>
                 <button className={`btn ${tipoEntrega === 'local' ? 'btn-primary' : 'btn-secondary'}`} style={{ flex: 1 }} onClick={() => setTipoEntrega('local')}>🏠 Local</button>
               </div>
             </div>
 
-            <div className="form-group">
-              <label>Hora de entrega (opcional)</label>
+            <div className="form-group"><label>Hora de entrega (opcional)</label>
               <input className="input" type="time" value={horaEntrega} onChange={e => setHoraEntrega(e.target.value)} />
             </div>
 
@@ -397,19 +383,30 @@ export default function Pedidos() {
                       <select className="select" value={item.menu_item_id} onChange={e => editarItem(idx, 'menu_item_id', e.target.value)} style={{ flex: 1 }}>
                         <option value="">Seleccionar...</option>
                         {menuItems.map(m => {
+                          const noDisp = !productoDisponible(m.id)
                           const stk = getStockTiempoReal(m.id, idx)
-                          const noDisp = stk !== null && (stk <= 0 || (stockMap[m.id] && !stockMap[m.id].disponible))
                           const unidad = m.tipo_medida === 'peso' ? 'kg' : ''
-                          return <option key={m.id} value={m.id} disabled={noDisp}>{m.nombre} {stk !== null ? `(${Math.round(stk * 100) / 100}${unidad})` : ''} {noDisp ? '— AGOTADO' : ''}</option>
+                          return <option key={m.id} value={m.id} disabled={noDisp}>
+                            {m.nombre} {stk !== null && stk > 0 ? `(${Math.round(stk * 100) / 100}${unidad})` : ''} {noDisp ? '— AGOTADO' : ''}
+                          </option>
                         })}
                       </select>
-                      <input className="input" inputMode="numeric" value={item.cantidadTexto || item.cantidad.toString()}
-                        onChange={e => editarItem(idx, 'cantidadTexto', e.target.value)} onBlur={() => validarCantidad(idx)}
-                        style={{ width: 50, textAlign: 'center', padding: '6px' }} />
+<input
+  type="text"
+  inputMode="numeric"
+  className="input"
+  value={item.cantidad}
+  onChange={e => {
+    const copia = [...itemsPedido]
+    copia[idx] = { ...copia[idx], cantidad: e.target.value }
+    setItemsPedido(copia)
+  }}
+  style={{ width: 50, textAlign: 'center', padding: '6px' }}
+/>
                       <button className="variante-remove" onClick={() => quitarItem(idx)}>✕</button>
                     </div>
 
-                    {item.menu_item_id && disponibleReal !== null && (
+                    {item.menu_item_id && disponibleReal !== null && disponibleReal > 0 && (
                       <div className="mt-8">
                         <span className={`stock-indicator ${peso ? stockColorPeso(disponibleReal) : stockColor(disponibleReal)}`}>
                           📦 {peso ? `${disponibleReal} kg` : `${disponibleReal} disponible${disponibleReal !== 1 ? 's' : ''}`}
@@ -445,7 +442,7 @@ export default function Pedidos() {
 
             <div className="total-editable mt-12 mb-8"><span className="text-bold" style={{ flex: 1 }}>Total</span><span className="text-sm" style={{ color: '#e8a849' }}>{formatCOP(totalCalculado())}</span></div>
             <div className="form-group"><label>Editar total (opcional)</label>
-              <input className="input" inputMode="numeric" placeholder={formatInput(totalCalculado().toString())} value={totalManual} onChange={e => setTotalManual(formatInput(e.target.value))} />
+              <input className="input" inputMode="numeric" placeholder={formatInput(totalCalculado().toString())} value={totalManual} onChange={e => setTotalManual(formatInput(e.target.value))} onFocus={seleccionarTodo} />
               {totalManual && <p className="text-xs mt-8" style={{ color: '#e8a849' }}>Total ajustado: {formatCOP(parsePrecio(totalManual))}</p>}
             </div>
 
@@ -462,10 +459,7 @@ export default function Pedidos() {
           <div className="modal-overlay" onClick={() => setDetalle(null)}>
             <div className="modal" onClick={e => e.stopPropagation()}>
               <h2 className="modal-title">Pedido — {detalle.cliente?.identificador}</h2>
-              <div className="flex-between mb-8">
-                <span className={`badge ${ev.clase}`}>{ev.texto}</span>
-                <span className="text-sm text-gray">{detalle.tipo_entrega === 'local' ? '🏠 Local' : '🛵 Domicilio'}</span>
-              </div>
+              <div className="flex-between mb-8"><span className={`badge ${ev.clase}`}>{ev.texto}</span><span className="text-sm text-gray">{detalle.tipo_entrega === 'local' ? '🏠 Local' : '🛵 Domicilio'}</span></div>
 
               {detalle.estado === 'en_proceso' && <p className="text-xs mb-8" style={{ color: '#e8a849' }}>⏳ El domicilio aún no ha salido</p>}
               {detalle.estado !== 'en_proceso' && !detalle.pago && <p className="text-xs mb-8" style={{ color: '#e74c3c' }}>🔴 Se envió pero no se ha pagado</p>}
@@ -486,12 +480,12 @@ export default function Pedidos() {
 
               <div className="form-group"><label>Editar total</label>
                 <input className="input" inputMode="numeric" placeholder={formatInput(Math.round(parseFloat(detalle.total)).toString())}
+                  onFocus={seleccionarTodo}
                   onBlur={e => { if (e.target.value) { editarTotal(detalle, e.target.value); setDetalle({ ...detalle, total: parsePrecio(e.target.value) }) } }} />
               </div>
 
               {detalle.notas && <p className="text-sm text-gray mb-12">📝 {detalle.notas}</p>}
 
-              {/* Pago */}
               {!detalle.pago && (
                 <div className="flex gap-8 mb-12">
                   <button className="btn btn-success" style={{ flex: 1 }} onClick={() => { setDetalle(null); abrirPago(detalle) }}>💳 Registrar pago</button>
@@ -499,7 +493,6 @@ export default function Pedidos() {
               )}
               {detalle.pago && <p className="text-sm mb-12" style={{ color: '#2ecc71' }}>✓ Pagado con {detalle.pago.metodo_pago}</p>}
 
-              {/* Enviar domicilio */}
               {detalle.estado === 'en_proceso' && detalle.tipo_entrega === 'domicilio' && (
                 <button className="btn btn-primary mb-8" onClick={() => cambiarEstado(detalle, 'no_entregado')}>🛵 Enviar domicilio</button>
               )}
