@@ -48,20 +48,24 @@ function AlarmSystem() {
 async function aceptarAlarma() {
     if (alarma) {
       // Sonido al tocar (funciona en iOS porque es interacción del usuario)
-      try {
-        const audio = new AudioContext()
-        const osc = audio.createOscillator()
-        const gain = audio.createGain()
-        osc.connect(gain)
-        gain.connect(audio.destination)
-        osc.frequency.value = 900
-        gain.gain.value = 0.5
-        osc.start()
-        setTimeout(() => { osc.frequency.value = 1200 }, 200)
-        setTimeout(() => { osc.frequency.value = 900 }, 400)
-        setTimeout(() => { osc.frequency.value = 1200 }, 600)
-        setTimeout(() => { osc.stop(); audio.close() }, 800)
-      } catch (e) {}
+try {
+  const audio = new AudioContext()
+  const osc = audio.createOscillator()
+  const gain = audio.createGain()
+  osc.connect(gain)
+  gain.connect(audio.destination)
+  gain.gain.value = 0.5
+  osc.start()
+  osc.frequency.value = 900
+  setTimeout(() => { osc.frequency.value = 1200 }, 300)
+  setTimeout(() => { osc.frequency.value = 900 }, 600)
+  setTimeout(() => { osc.frequency.value = 1200 }, 900)
+  setTimeout(() => { osc.frequency.value = 900 }, 1200)
+  setTimeout(() => { osc.frequency.value = 1200 }, 1500)
+  setTimeout(() => { osc.frequency.value = 900 }, 1800)
+  setTimeout(() => { osc.frequency.value = 1200 }, 2100)
+  setTimeout(() => { osc.stop(); audio.close() }, 10000)
+} catch (e) {}
       // Vibración
       try { navigator.vibrate([200, 100, 200, 100, 200]) } catch (e) {}
       
